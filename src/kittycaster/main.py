@@ -37,11 +37,14 @@ video_ids:
 discovery_timeout: 10
 schedule:
   # Example schedule entries can go here
-  # - friendly_name: "KittyCaster TV"
+  # - friendly_name: "Living Room TV"
   #   video_id: "dQw4w9WgXcQ"
-  #   start_time: "08:00"
-  #   end_time: "09:00"
+  #   time: "08:00"
+  #   action: "start"
   #   volume: 0.05
+  # - friendly_name: "Living Room TV"
+  #   time: "10:00"
+  #   action: "stop"
 """
 
 DEFAULT_CONFIG_DICT = {
@@ -101,6 +104,48 @@ def load_config(config_file: Path) -> dict:
             "Error loading config file '%s': %s. Using defaults.", config_file, exc
         )
         return DEFAULT_CONFIG_DICT
+
+
+import schedule
+from functools import partial
+
+
+def schedule_event(
+    friendly_name: str,
+    video_id: str,
+    event_time: str,
+    action: str,
+    discovery_timeout: int,
+    volume: float = 0.003,
+):
+    """
+    Schedule a single event (start or stop) at a specific daily time.
+    """
+
+    def perform_action():
+        # Import or reference your get_chromecast, cast_youtube_video, stop_casting
+        from .chromecast_helper import get_chromecast, cast_youtube_video, stop_casting
+
+        chromecast = get_chromecast(friendly_name, discovery_timeout)
+
+        if action == "start":
+            cast_youtube_video(chromecast, video_id, volume)
+        elif action == "stop":
+            stop_casting(chromecast)
+        else:
+            print(f"Unknown action: {action}")
+
+    # Create the scheduled job
+    job = schedule.every().day.at(event_time).do(perform_action)
+
+    # Attach metadata so we can print it in run_schedule_loop, if desired
+    job.meta = {
+        "friendly_name": friendly_name,
+        "video_id": video_id,
+        "time": event_time,
+        "action": action,
+        "volume": volume,
+    }
 
 
 def schedule_video(
@@ -212,35 +257,31 @@ def interactive_schedule(config):
 
 
 def run_schedule_loop():
-    """
-    Runs the schedule jobs in an infinite loop, checking every second.
-    """
-    # Print the full schedule so user knows what's queued
     jobs = schedule.get_jobs()
     if not jobs:
-        logger.warning(
-            "No schedule entries found. Waiting for interactive input or config changes."
-        )
+        logger.warning("No schedule entries found.")
     else:
-        logger.info("KittyCaster loaded %d scheduled task(s):", len(jobs))
+        logger.info("KittyCaster loaded %d scheduled event(s):", len(jobs))
         for job in jobs:
-            # If we attached meta data:
             meta = getattr(job, "meta", {})
-            action = meta.get("action")
-            friendly_name = meta.get("friendly_name", "Unknown Device")
-            video_id = meta.get("video_id", "??")
-            time_str = meta.get("start_time") or meta.get("end_time") or "??"
-            volume = meta.get("volume", 0.003)
-
-            logger.info(
-                " - %s at %s [device=%s, video_id=%s, volume=%.3f]. Next run: %s",
-                action.capitalize(),
-                time_str,
-                friendly_name,
-                video_id,
-                volume,
-                job.next_run,
-            )
+            fname = meta.get("friendly_name", "Unknown")
+            vid = meta.get("video_id", "N/A")
+            t = meta.get("time", "??:??")
+            act = meta.get("action", "unknown")
+            vol = meta.get("volume", 0.003)
+            if act == "start":
+                # Show time, action, device, video ID, volume
+                logger.info(
+                    "Event: [Time=%s, Action=%s, Device=%s, VideoID=%s, Volume=%.3f]",
+                    t,
+                    act,
+                    fname,
+                    vid,
+                    vol,
+                )
+            else:
+                # For "stop" (or any other action), omit video/volume
+                logger.info("Event: [Time=%s, Action=%s, Device=%s]", t, act, fname)
 
     logger.info("KittyCaster schedule is now running. Press Ctrl+C to stop.")
     while True:
@@ -286,43 +327,29 @@ def cmd_once(args):
 
 
 def cmd_schedule(args):
-    """
-    Handle the "schedule" subcommand: set up daily schedules from config or interactive.
-    """
     config_path = Path(args.config).expanduser()
     config = load_config(config_path)
 
-    # 1) If the user gave --interactive, gather schedule entries via prompts
     if args.interactive:
+        # If still doing interactive mode, you'll prompt for time + action,
+        # then schedule one event at a time.
         interactive_schedule(config)
-
-    # 2) Otherwise, check config for "schedule" entries
     else:
         schedule_data = config.get("schedule")
+
         # Validate that 'schedule' is a list
         if not isinstance(schedule_data, list):
-            logger.error(
-                "Config error: 'schedule' must be a list in %s. Instead got %s.\n"
-                "Example:\n\n"
-                "schedule:\n"
-                '  - friendly_name: "KittyCaster TV"\n'
-                '    video_id: "dQw4w9WgXcQ"\n'
-                '    start_time: "08:00"\n'
-                '    end_time: "10:00"\n'
-                "    volume: 0.05\n",
-                config_path,
-                type(schedule_data).__name__ if schedule_data is not None else "None",
-            )
+            logger.error("Config error: 'schedule' must be a list.")
             sys.exit(1)
 
         for item in schedule_data:
             fname = item.get("friendly_name", config["friendly_name"])
             vid = item.get("video_id", random.choice(config["video_ids"]))
-            stime = item.get("start_time", "08:00")
-            etime = item.get("end_time", "09:00")
+            etime = item.get("time", "08:00")  # Single time for this event
+            act = item.get("action", "start")
             vol = item.get("volume", 0.003)
 
-            schedule_video(fname, vid, stime, etime, config["discovery_timeout"], vol)
+            schedule_event(fname, vid, etime, act, config["discovery_timeout"], vol)
 
     run_schedule_loop()
 
