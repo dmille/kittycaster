@@ -304,7 +304,7 @@ def cmd_init(args):
 
 def cmd_once(args):
     """
-    Handle a one-off start or stop cast event.
+    Handle a one-off start or stop cast event, using config defaults if no CLI overrides.
     """
     config_path = Path(args.config).expanduser()
     config = load_config(config_path)
@@ -312,16 +312,38 @@ def cmd_once(args):
     if not args.start and not args.stop:
         raise SystemExit("--once requires either --start or --stop.")
 
+    # Use command-line friendly_name if given, else config
     friendly_name = args.friendly_name or config["friendly_name"]
-    discovery_timeout = config["discovery_timeout"]
 
+    # Fallback to config for discovery_timeout
+    discovery_timeout = config.get("discovery_timeout", 10)
+
+    # Resolve the volume:
+    #  - If user explicitly provided one, use that.
+    #  - Otherwise, see if there's a 'volume' in config; fall back to 0.003 if missing.
+    if args.volume != 0.003:  # parser's default
+        volume = args.volume
+    else:
+        volume = config.get("volume", 0.003)
+
+    # Resolve the video_id:
+    #  - If user provided --video_id, use that.
+    #  - Else if config has a top-level "video_id", use that.
+    #  - Else pick a random one from config["video_ids"].
+    if args.start:
+        if args.video_id:
+            video_id = args.video_id
+        elif "video_id" in config:
+            video_id = config["video_id"]
+        else:
+            video_id = random.choice(config["video_ids"])
+
+    # Connect to Chromecast
     chromecast = get_chromecast(friendly_name, discovery_timeout)
 
+    # Perform the start or stop action
     if args.start:
-        video_id = (
-            args.video_id if args.video_id else random.choice(config["video_ids"])
-        )
-        cast_youtube_video(chromecast, video_id, args.volume)
+        cast_youtube_video(chromecast, video_id, volume)
     elif args.stop:
         stop_casting(chromecast)
 
