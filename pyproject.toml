@@ -1,0 +1,32 @@
+[build-system]
+requires = [
+    "setuptools>=61.0",
+    "wheel"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kittycaster"
+version = "0.1.0"
+description = "KittyCaster is a tool for casting YouTube videos to Chromecast devices with scheduling."
+authors = [
+  { name = "Your Name" }
+]
+# license = "MIT"
+readme = "README.md"
+requires-python = ">=3.7"
+
+# List your dependencies here
+dependencies = [
+  "pychromecast",
+  "PyYAML",
+  "schedule",
+  "zeroconf"
+]
+
+# Creates a CLI command `kittycaster` that calls the `main()` function in `kittycaster/main.py`
+[project.scripts]
+kittycaster = "kittycaster.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

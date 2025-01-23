@@ -1,0 +1,7 @@
+/.direnv/
+/.envrc
+/cron.log
+/run
+/config.yaml
+/__pycache__/
+/src/kittycaster/__pycache__/

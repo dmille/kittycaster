@@ -1,0 +1,4 @@
+pychromecast
+PyYAML
+schedule
+zeroconf

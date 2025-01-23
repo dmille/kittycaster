@@ -1,0 +1,91 @@
+Metadata-Version: 2.2
+Name: kittycaster
+Version: 0.1.0
+Summary: KittyCaster is a tool for casting YouTube videos to Chromecast devices with scheduling.
+Author: Your Name
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+Requires-Dist: pychromecast
+Requires-Dist: PyYAML
+Requires-Dist: schedule
+Requires-Dist: zeroconf
+
+# KittyCaster
+
+A Python script to schedule and cast YouTube videos to Chromecast devices.
+
+## Features
+
+- Modern Chromecast discovery
+- Configurable defaults via YAML
+- Flexible scheduling options
+- Interactive and config-based scheduling
+- One-off casting and stopping
+
+## Installation
+
+```bash
+pip install -r requirements.txt
+```
+
+## Usage Examples
+
+### Initialize Configuration
+
+Create default config.yaml:
+
+```bash
+./main.py init
+# or
+kittycaster init
+```
+
+### Interactive Scheduling
+
+Interactively set up schedules:
+
+```bash
+kittycaster schedule --interactive
+```
+
+Prompts for times, video IDs, volumes, etc., then runs an infinite loop.
+
+### Schedule from Config
+
+Run schedules defined in config.yaml:
+
+```bash
+kittycaster schedule
+```
+
+### One-off Casting
+
+Cast a specific video immediately:
+
+```bash
+kittycaster once --start --friendly_name "KittyCaster TV" --video_id "dQw4w9WgXcQ"
+```
+
+### Stop Casting
+
+Immediately stop casting:
+
+```bash
+kittycaster once --stop
+```
+
+## Configuration
+
+Create a `config.yaml` to customize settings and schedules.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit changes
+4. Push to the branch
+5. Create a Pull Request
+
+## License
+
+GNU General Public License v3.0 (GPLv3)

@@ -1,0 +1,8 @@
+README.md
+pyproject.toml
+src/kittycaster.egg-info/PKG-INFO
+src/kittycaster.egg-info/SOURCES.txt
+src/kittycaster.egg-info/dependency_links.txt
+src/kittycaster.egg-info/entry_points.txt
+src/kittycaster.egg-info/requires.txt
+src/kittycaster.egg-info/top_level.txt
