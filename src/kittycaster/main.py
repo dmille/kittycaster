@@ -13,7 +13,12 @@ from pathlib import Path
 from functools import partial
 
 # Relative import from within the same package
-from .chromecast_helper import get_chromecast, cast_youtube_video, stop_casting
+from .chromecast_helper import (
+    get_chromecast,
+    cast_youtube_video,
+    stop_casting,
+    cast_media,
+)
 
 # -------------------------------------------------------------------
 # Logging Configuration
@@ -123,9 +128,6 @@ def schedule_event(
     """
 
     def perform_action():
-        # Import or reference your get_chromecast, cast_youtube_video, stop_casting
-        from .chromecast_helper import get_chromecast, cast_youtube_video, stop_casting
-
         chromecast = get_chromecast(friendly_name, discovery_timeout)
 
         if action == "start":
@@ -343,7 +345,12 @@ def cmd_once(args):
 
     # Perform the start or stop action
     if args.start:
-        cast_youtube_video(chromecast, video_id, volume)
+        cast_media(
+            chromecast,
+            "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+            volume,
+        )
+        # cast_youtube_video(chromecast, video_id, volume)
     elif args.stop:
         stop_casting(chromecast)
 
