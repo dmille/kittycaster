@@ -119,36 +119,6 @@ def cast_media(chromecast, url, volume):
     logger.info("Set Chromecast volume to %s", volume)
 
 
-def cast_youtube_video(chromecast, video_id: str, volume: float = 0.003):
-    """
-    Cast a YouTube video to the selected Chromecast.
-    """
-    logger.info("Casting YouTube video: https://www.youtube.com/watch?v=%s", video_id)
-
-    yt_controller = YouTubeController(timeout=60)
-    chromecast.register_handler(yt_controller)
-
-    yt_controller.status_update_event.clear()
-    logger.info("Requesting screen_id from YouTube controller")
-    yt_controller.send_message({MESSAGE_TYPE: TYPE_GET_SCREEN_ID})
-    status = yt_controller.status_update_event.wait(60)
-    yt_controller.status_update_event.clear()
-    if not status:
-        logger.error("Failed to update screen_id")
-        exit(1)
-
-    logger.info("Started YouTube session on %s", chromecast.cast_info.friendly_name)
-    yt_controller.play_video(video_id)
-    chromecast.media_controller.block_until_active()
-
-    logger.info(
-        "Video %s is now playing on %s", video_id, chromecast.cast_info.friendly_name
-    )
-
-    chromecast.set_volume(volume)
-    logger.info("Set Chromecast volume to %s", volume)
-
-
 def stop_casting(chromecast):
     """
     Stop any currently playing app on the Chromecast (including YouTube).

@@ -12,10 +12,7 @@ import socket
 import queue
 import socketserver
 
-from datetime import datetime
 from pathlib import Path
-from functools import partial
-
 
 from .chromecast_helper import (
     get_chromecast,
