@@ -21,9 +21,7 @@ from pychromecast.const import MESSAGE_TYPE
 from pychromecast.controllers.youtube import TYPE_GET_SCREEN_ID
 import IPython
 
-logger = logging.getLogger(__name__)
-
-zconf = Zeroconf()
+from .logger import logger
 
 
 class FriendlyNameListener:
@@ -52,7 +50,7 @@ def get_chromecast(friendly_name: str, discovery_timeout: int = 5):
     Discover and connect to a Chromecast by friendly name.
     If the specified Chromecast is not found, print all discovered devices.
     """
-
+    zconf = Zeroconf()
     listener = FriendlyNameListener(friendly_name)
     browser = CastBrowser(cast_listener=listener, zeroconf_instance=zconf)
     browser.start_discovery()
