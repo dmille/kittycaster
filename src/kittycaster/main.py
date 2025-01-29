@@ -9,10 +9,11 @@ import schedule
 import yaml
 import threading
 import socket
-import queue
 import socketserver
-
 from pathlib import Path
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.patch_stdout import patch_stdout
 
 from .chromecast_helper import (
     get_chromecast,
@@ -21,6 +22,20 @@ from .chromecast_helper import (
 )
 from .logger import logger
 from .fileserver import start_http_server, stop_http_server
+
+
+def user_message(msg):
+    """
+    Print a message for the user (via console).
+    You can also replicate it in logger if desired.
+    """
+    print(msg)  # console
+    # logger.info(msg)   # (optional) also log to file, if you want
+
+
+# -------------------------------------------------------------------
+# Global set of devices in use (so we can stop them all on quit)
+devices_in_use = set()
 
 
 # -------------------------------------------------------------------
@@ -43,6 +58,7 @@ logger.info("Auto-detected local IP for HTTP server: %s", HOST_IP)
 # -------------------------------------------------------------------
 # Default Config
 # -------------------------------------------------------------------
+import yaml
 
 DEFAULT_CONFIG_DICT = {
     "friendly_name": "KittyCaster TV",
@@ -54,8 +70,26 @@ DEFAULT_CONFIG_DICT = {
     "media_files": [],
 }
 
+DEFAULT_CONTENT = """\
+friendly_name: "KittyCaster TV"
+discovery_timeout: 10
+serve_local_folder: "videos"
+serve_port: 8000
+include_local_media: true
+media_files: []
 
-DEFAULT_CONTENT = yaml.dump(DEFAULT_CONFIG_DICT)
+schedule:
+  # Uncomment and customize to schedule a daily start/stop:
+  # - friendly_name: "Living Room TV"
+  #   media_file: "my_video.mp4"
+  #   time: "08:00"
+  #   action: "start"
+  #   volume: 0.07
+  # - friendly_name: "Living Room TV"
+  #   time: "09:00"
+  #   action: "stop"
+"""
+
 DEFAULT_CONFIG_PATH = Path("~/.config/kittycaster/config.yaml").expanduser()
 
 
@@ -64,10 +98,12 @@ DEFAULT_CONFIG_PATH = Path("~/.config/kittycaster/config.yaml").expanduser()
 # -------------------------------------------------------------------
 def create_default_config(config_path: Path) -> None:
     if config_path.exists():
+        user_message(f"Config file already exists at '{config_path}'. No changes made.")
         logger.info("Config file already exists at '%s'. No changes made.", config_path)
         return
 
     logger.info("Creating default config file at '%s'.", config_path)
+    user_message(f"Creating default config file at '{config_path}'.")
     config_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with config_path.open("w", encoding="utf-8") as f:
@@ -100,6 +136,8 @@ def load_config(config_file: Path) -> dict:
 # Local Media
 # -------------------------------------------------------------------
 def gather_local_media_urls(directory: str, port: int) -> list:
+    from pathlib import Path
+
     if not directory:
         return []
     p = Path(directory).expanduser().resolve()
@@ -108,7 +146,7 @@ def gather_local_media_urls(directory: str, port: int) -> list:
         return []
 
     base_url = f"http://{HOST_IP}:{port}"
-    exts = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".mp3", ".wav")
+    exts = ".mp4"
     found = []
     for entry in p.iterdir():
         if entry.is_file() and entry.suffix.lower() in exts:
@@ -134,12 +172,25 @@ def schedule_event(
     event_time: str,
     action: str,
     discovery_timeout: int,
-    volume: float = 0.003,
+    volume: float = 1.0,
     serve_local_folder: str = "",
     serve_port: int = 8000,
 ):
     def perform_action():
+        user_message(
+            f"--------------------------------------------------\n"
+            f"Scheduled Event:\n"
+            f"  Time:   {event_time}\n"
+            f"  Action: {action}\n"
+            f"  Media:  {media_file}\n"
+            f"  Device: {friendly_name}\n"
+            f"--------------------------------------------------"
+        )
         cc = get_chromecast(friendly_name, discovery_timeout)
+
+        # [NEW] Track this device in global set so we can stop it at quit
+        devices_in_use.add(friendly_name)
+
         if action == "start":
             final_url = build_local_url_if_needed(
                 media_file, serve_local_folder, serve_port
@@ -181,7 +232,7 @@ def load_schedule_from_config(config):
 
         t = item.get("time", "08:00")
         act = item.get("action", "start")
-        vol = item.get("volume", 0.003)
+        vol = item.get("volume", 1.0)
         schedule_event(
             fname,
             mfile,
@@ -203,11 +254,14 @@ def start_random_video(config):
         return
     chosen = random.choice(config["media_files"])
     cc = get_chromecast(config["friendly_name"], config["discovery_timeout"])
+
+    devices_in_use.add(config["friendly_name"])
+
     final_url = build_local_url_if_needed(
         chosen, config["serve_local_folder"], config["serve_port"]
     )
     logger.info("Manual start: %s", final_url)
-    cast_media(cc, final_url, config.get("volume", 0.003))
+    cast_media(cc, final_url, config.get("volume", 1))
 
 
 def stop_current_video(config):
@@ -216,75 +270,83 @@ def stop_current_video(config):
     stop_casting(cc)
 
 
-# -------------------------------------------------------------------
-# Main Loop with separate input thread
-# -------------------------------------------------------------------
-def read_user_input(cmd_queue):
-    """
-    Blocking input() in a separate thread.
-    Each time the user types a line, we put it into cmd_queue.
-    """
-    print("\nKittyCaster is running. Type 'start', 'stop', or 'q' to quit.\n")
-    while True:
+def stop_all_devices(config):
+    user_message("Stopping all videos on all known devices...")
+    for dev in devices_in_use:
+        user_message(f" - Stopping device: {dev}")
         try:
-            cmd = input("KittyCaster> ").strip().lower()
-        except EOFError:
-            # e.g. if user closes terminal
-            cmd = "q"
-        cmd_queue.put(cmd)
-        if cmd == "q":
-            break
+            cc = get_chromecast(dev, config["discovery_timeout"])
+            stop_casting(cc)
+        except SystemExit:
+            logger.error("Could not stop device '%s' due to error or not found.", dev)
+
+    devices_in_use.clear()  # optional: empty set after stopping
 
 
-def run_schedule_loop(config):
-    # Display any scheduled events
+# -------------------------------------------------------------------
+# Prompt Toolkit Integrated Loop
+# -------------------------------------------------------------------
+def schedule_worker():
+    """
+    Background thread that runs schedule.run_pending() every second.
+    """
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
+
+def run_schedule_loop_with_prompt(config):
+    # Show the scheduled events
     jobs = schedule.get_jobs()
     if jobs:
-        logger.info("Loaded %d scheduled event(s).", len(jobs))
+        logger.info("Loaded %d scheduled event(s):", len(jobs))
+        user_message(f"Loaded {len(jobs)} scheduled event(s):")
         for job in jobs:
             m = job.meta
-            logger.info(
-                "  Time=%s | Action=%s | Device=%s | Media=%s | Volume=%.3f",
-                m.get("time", "??"),
-                m.get("action", "?"),
-                m.get("friendly_name", "?"),
-                m.get("media_file", "?"),
-                m.get("volume", 0.003),
+            text = (
+                "  Time={} | Action={} | Device={} | Media={} | Volume={:.3f}".format(
+                    m.get("time", "??"),
+                    m.get("action", "?"),
+                    m.get("friendly_name", "?"),
+                    m.get("media_file", "?"),
+                    m.get("volume", 1.0),
+                )
             )
+            user_message(text)
+            logger.info(text)
     else:
         logger.info("No scheduled events found.")
 
-    # Start a thread to read user commands
-    cmd_queue = queue.Queue()
-    input_thread = threading.Thread(
-        target=read_user_input, args=(cmd_queue,), daemon=True
-    )
-    input_thread.start()
+    # Start the schedule worker thread
+    t = threading.Thread(target=schedule_worker, daemon=True)
+    t.start()
+
+    print("\nKittyCaster is running. Type 'start', 'stop', or 'q' to quit.\n")
+    session = PromptSession()
 
     try:
-        while True:
-            # 1) Run any scheduled tasks
-            schedule.run_pending()
-
-            # 2) Check if user typed something
-            while not cmd_queue.empty():
-                cmd = cmd_queue.get()
-                if cmd == "start":
-                    start_random_video(config)
-                elif cmd == "stop":
-                    stop_current_video(config)
-                elif cmd == "q":
+        with patch_stdout():
+            while True:
+                user_input = session.prompt("KittyCaster> ").strip().lower()
+                if user_input == "q":
                     logger.info("User requested quit.")
-                    return
+                    stop_all_devices(config)
+                    break
+                elif user_input == "start":
+                    start_random_video(config)
+                    user_message("Started random video.")
+                elif user_input == "stop":
+                    stop_current_video(config)
+                    user_message("Stopped current video.")
                 else:
-                    print("Unknown command:", cmd)
-
-            # 3) Sleep a bit so we don't busy-loop
-            time.sleep(1)
+                    logger.info(
+                        "Unknown command: %s (use 'start','stop','q')", user_input
+                    )
     except KeyboardInterrupt:
         logger.info("Ctrl+C pressed; quitting.")
     finally:
-        stop_http_server()
+        # also forcibly close the local server
+        stop_http_server(force_close=True)
         print("KittyCaster exited. Goodbye!")
 
 
@@ -293,7 +355,7 @@ def run_schedule_loop(config):
 # -------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="KittyCaster with 2-thread solution to avoid repeated prompts."
+        description="KittyCaster with prompt_toolkit for interactive commands."
     )
     parser.add_argument(
         "--init",
@@ -316,7 +378,7 @@ def main():
     if config.get("serve_local_folder"):
         start_http_server(config["serve_local_folder"], config.get("serve_port", 8000))
 
-    # If needed, gather local media
+    # Gather local media if needed
     if config.get("include_local_media"):
         found = gather_local_media_urls(
             config["serve_local_folder"], config["serve_port"]
@@ -325,11 +387,11 @@ def main():
             if f not in config["media_files"]:
                 config["media_files"].append(f)
 
-    # Load schedule
+    # Load schedule from config
     load_schedule_from_config(config)
 
-    # Run main loop
-    run_schedule_loop(config)
+    # Run the prompt-based schedule loop
+    run_schedule_loop_with_prompt(config)
 
 
 if __name__ == "__main__":
