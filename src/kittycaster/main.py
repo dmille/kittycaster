@@ -188,7 +188,7 @@ def schedule_event(
         )
         cc = get_chromecast(friendly_name, discovery_timeout)
 
-        # [NEW] Track this device in global set so we can stop it at quit
+        # Track this device in global set so we can stop it at quit
         devices_in_use.add(friendly_name)
 
         if action == "start":
@@ -261,7 +261,27 @@ def start_random_video(config):
         chosen, config["serve_local_folder"], config["serve_port"]
     )
     logger.info("Manual start: %s", final_url)
-    cast_media(cc, final_url, config.get("volume", 1))
+    cast_media(cc, final_url, config.get("volume", 1.0))
+
+
+# -------------------------------------------------------------------
+# NEW: Start a specific file or URL, typed at the prompt
+# -------------------------------------------------------------------
+def start_specific_video(config, media_file):
+    if not media_file:
+        logger.warning("No media file provided to start_specific_video.")
+        return
+
+    cc = get_chromecast(config["friendly_name"], config["discovery_timeout"])
+    devices_in_use.add(config["friendly_name"])
+
+    final_url = build_local_url_if_needed(
+        media_file,
+        config["serve_local_folder"],
+        config["serve_port"],
+    )
+    logger.info("Manual start (specific video): %s", final_url)
+    cast_media(cc, final_url, config.get("volume", 1.0))
 
 
 def stop_current_video(config):
@@ -321,29 +341,48 @@ def run_schedule_loop_with_prompt(config):
     t = threading.Thread(target=schedule_worker, daemon=True)
     t.start()
 
-    print("\nKittyCaster is running. Type 'start', 'stop', or 'q' to quit.\n")
+    print("\nKittyCaster is running. Type 'start [file]', 'stop', or 'q' to quit.\n")
     session = PromptSession()
 
     try:
         with patch_stdout():
             while True:
-                user_input = session.prompt("KittyCaster> ").strip().lower()
-                if user_input == "q":
+                user_input = session.prompt("KittyCaster> ").strip()
+                if not user_input:
+                    continue  # If the user just hits enter, do nothing
+
+                parts = user_input.split(maxsplit=1)
+                command = parts[0].lower()
+
+                if command == "q":
                     logger.info("User requested quit.")
                     stop_all_devices(config)
                     break
-                elif user_input == "start":
-                    start_random_video(config)
-                    user_message("Started random video.")
-                elif user_input == "stop":
+
+                elif command == "start":
+                    # Optional argument after 'start'
+                    if len(parts) > 1:
+                        media_arg = parts[1].strip()
+                        start_specific_video(config, media_arg)
+                        user_message(f"Started video: {media_arg}")
+                    else:
+                        # No argument => pick a random video
+                        start_random_video(config)
+                        user_message("Started random video.")
+
+                elif command == "stop":
                     stop_current_video(config)
                     user_message("Stopped current video.")
+
                 else:
-                    logger.info(
-                        "Unknown command: %s (use 'start','stop','q')", user_input
+                    user_message(
+                        "Unknown command. Use 'start [file]', 'stop', or 'q' to quit."
                     )
+                    logger.info("Unknown command: %s", user_input)
+
     except KeyboardInterrupt:
         logger.info("Ctrl+C pressed; quitting.")
+        stop_all_devices(config)
     finally:
         # also forcibly close the local server
         stop_http_server(force_close=True)
