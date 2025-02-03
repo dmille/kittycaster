@@ -7,49 +7,33 @@ Provides functionality for discovering and controlling a Chromecast device.
 
 import sys
 import time
-import logging
 from uuid import UUID
 
 from zeroconf import Zeroconf
 from pychromecast.discovery import CastBrowser
 from pychromecast.models import CastInfo
 from pychromecast import get_chromecast_from_cast_info
-from pychromecast.controllers.youtube import YouTubeController
 from pychromecast.error import PyChromecastError
-
-from pychromecast.const import MESSAGE_TYPE
-from pychromecast.controllers.youtube import TYPE_GET_SCREEN_ID
-import IPython
 
 from .logger import logger
 
 
 class FriendlyNameListener:
-    """
-    A simple listener to track discovered devices by friendly_name.
-    """
-
     def __init__(self, target_name: str):
         self.target_name = target_name
         self.devices_by_name: dict[str, CastInfo] = {}
 
     def add_cast(self, uuid: UUID, service: str) -> None:
-        pass  # Not strictly needed for minimal usage
+        pass
 
     def remove_cast(self, uuid: UUID, service: str, cast_info: CastInfo) -> None:
-        name = cast_info.friendly_name
-        if name in self.devices_by_name:
-            del self.devices_by_name[name]
+        self.devices_by_name.pop(cast_info.friendly_name, None)
 
     def update_cast(self, uuid: UUID, service: str) -> None:
         pass
 
 
 def get_chromecast(friendly_name: str, discovery_timeout: int = 5):
-    """
-    Discover and connect to a Chromecast by friendly name.
-    If the specified Chromecast is not found, print all discovered devices.
-    """
     zconf = Zeroconf()
     listener = FriendlyNameListener(friendly_name)
     browser = CastBrowser(cast_listener=listener, zeroconf_instance=zconf)
@@ -63,7 +47,6 @@ def get_chromecast(friendly_name: str, discovery_timeout: int = 5):
 
     deadline = time.time() + discovery_timeout
     found_cast_info = None
-
     while time.time() < deadline:
         for uuid, cast_info in browser.devices.items():
             listener.devices_by_name[cast_info.friendly_name] = cast_info
@@ -75,14 +58,11 @@ def get_chromecast(friendly_name: str, discovery_timeout: int = 5):
         time.sleep(0.5)
 
     if not found_cast_info:
-        browser.stop_discovery()  # closes Zeroconf internally
+        browser.stop_discovery()
+        zconf.close()
         logger.error("No Chromecast found with friendly name '%s'.", friendly_name)
-
-        # Print all discovered Chromecasts
         if listener.devices_by_name:
-            logger.info("Discovered Chromecasts:")
-            for name, info in listener.devices_by_name.items():
-                logger.info(" - %s", name)
+            logger.info("Discovered: %s", ", ".join(listener.devices_by_name.keys()))
         else:
             logger.info("No Chromecasts discovered.")
         sys.exit(1)
@@ -92,36 +72,38 @@ def get_chromecast(friendly_name: str, discovery_timeout: int = 5):
         cast.wait()
     except PyChromecastError as err:
         browser.stop_discovery()
+        zconf.close()
         logger.error("Failed to initialize Chromecast: %s", err)
         sys.exit(1)
 
-    browser.stop_discovery()  # closes Zeroconf internally
-
+    # Keep discovery and Zeroconf running until casting is stopped.
+    cast._browser = browser
+    cast._zeroconf = zconf
     logger.info("Connected to Chromecast: %s", found_cast_info.friendly_name)
-
     return cast
 
 
-def cast_media(chromecast, url, volume):
-    filetype = url.split(".")[-1]
+def cast_media(chromecast, url: str, volume: float):
+    filetype = url.rsplit(".", 1)[-1]
     if filetype not in ["mp4", "webm"]:
         raise ValueError(f"Unsupported filetype: {filetype}")
 
     logger.info("Casting media: %s", url)
-
     mc = chromecast.media_controller
     mc.play_media(url, f"video/{filetype}")
     mc.block_until_active()
-
     logger.info("Media is now playing on %s", chromecast.cast_info.friendly_name)
-
     chromecast.set_volume(volume)
     logger.info("Set Chromecast volume to %s", volume)
 
 
 def stop_casting(chromecast):
     """
-    Stop any currently playing app on the Chromecast (including YouTube).
+    Stop any currently playing app on the Chromecast and clean up discovery.
     """
     chromecast.quit_app()
     logger.info("Stopped casting on %s", chromecast.cast_info.friendly_name)
+    if hasattr(chromecast, "_browser"):
+        chromecast._browser.stop_discovery()
+    if hasattr(chromecast, "_zeroconf"):
+        chromecast._zeroconf.close()
