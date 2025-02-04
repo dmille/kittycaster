@@ -17,6 +17,16 @@ from pychromecast.error import PyChromecastError
 
 from .logger import logger
 
+# Global singleton Zeroconf instance
+_global_zeroconf = None
+
+
+def get_global_zeroconf() -> Zeroconf:
+    global _global_zeroconf
+    if _global_zeroconf is None:
+        _global_zeroconf = Zeroconf()
+    return _global_zeroconf
+
 
 class FriendlyNameListener:
     def __init__(self, target_name: str):
@@ -34,7 +44,7 @@ class FriendlyNameListener:
 
 
 def get_chromecast(friendly_name: str, discovery_timeout: int = 5):
-    zconf = Zeroconf()
+    zconf = get_global_zeroconf()
     listener = FriendlyNameListener(friendly_name)
     browser = CastBrowser(cast_listener=listener, zeroconf_instance=zconf)
     browser.start_discovery()
@@ -44,7 +54,6 @@ def get_chromecast(friendly_name: str, discovery_timeout: int = 5):
         friendly_name,
         discovery_timeout,
     )
-
     deadline = time.time() + discovery_timeout
     found_cast_info = None
     while time.time() < deadline:
@@ -58,8 +67,7 @@ def get_chromecast(friendly_name: str, discovery_timeout: int = 5):
         time.sleep(0.5)
 
     if not found_cast_info:
-        browser.stop_discovery()
-        zconf.close()
+        # Don't stop global Zeroconf.
         logger.error("No Chromecast found with friendly name '%s'.", friendly_name)
         if listener.devices_by_name:
             logger.info("Discovered: %s", ", ".join(listener.devices_by_name.keys()))
@@ -72,11 +80,10 @@ def get_chromecast(friendly_name: str, discovery_timeout: int = 5):
         cast.wait()
     except PyChromecastError as err:
         browser.stop_discovery()
-        zconf.close()
         logger.error("Failed to initialize Chromecast: %s", err)
         sys.exit(1)
 
-    # Keep discovery and Zeroconf running until casting is stopped.
+    # Attach browser for potential cleanup; global Zeroconf stays alive.
     cast._browser = browser
     cast._zeroconf = zconf
     logger.info("Connected to Chromecast: %s", found_cast_info.friendly_name)
@@ -87,7 +94,6 @@ def cast_media(chromecast, url: str, volume: float):
     filetype = url.rsplit(".", 1)[-1]
     if filetype not in ["mp4", "webm"]:
         raise ValueError(f"Unsupported filetype: {filetype}")
-
     logger.info("Casting media: %s", url)
     mc = chromecast.media_controller
     mc.play_media(url, f"video/{filetype}")
@@ -98,12 +104,8 @@ def cast_media(chromecast, url: str, volume: float):
 
 
 def stop_casting(chromecast):
-    """
-    Stop any currently playing app on the Chromecast and clean up discovery.
-    """
     chromecast.quit_app()
     logger.info("Stopped casting on %s", chromecast.cast_info.friendly_name)
     if hasattr(chromecast, "_browser"):
         chromecast._browser.stop_discovery()
-    if hasattr(chromecast, "_zeroconf"):
-        chromecast._zeroconf.close()
+    # Never close the global Zeroconf.
