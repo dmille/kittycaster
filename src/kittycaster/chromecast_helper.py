@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 chromecast_helper.py
-
 Provides functionality for discovering and controlling a Chromecast device.
 """
 
@@ -16,16 +15,6 @@ from pychromecast import get_chromecast_from_cast_info
 from pychromecast.error import PyChromecastError
 
 from .logger import logger
-
-# Global singleton Zeroconf instance
-_global_zeroconf = None
-
-
-def get_global_zeroconf() -> Zeroconf:
-    global _global_zeroconf
-    if _global_zeroconf is None:
-        _global_zeroconf = Zeroconf()
-    return _global_zeroconf
 
 
 class FriendlyNameListener:
@@ -44,11 +33,10 @@ class FriendlyNameListener:
 
 
 def get_chromecast(friendly_name: str, discovery_timeout: int = 5):
-    zconf = get_global_zeroconf()
+    zconf = Zeroconf()
     listener = FriendlyNameListener(friendly_name)
     browser = CastBrowser(cast_listener=listener, zeroconf_instance=zconf)
     browser.start_discovery()
-
     logger.info(
         "Discovering Chromecasts (friendly_name='%s') for up to %d seconds...",
         friendly_name,
@@ -65,25 +53,23 @@ def get_chromecast(friendly_name: str, discovery_timeout: int = 5):
         if found_cast_info:
             break
         time.sleep(0.5)
-
     if not found_cast_info:
-        # Don't stop global Zeroconf.
+        browser.stop_discovery()
+        zconf.close()
         logger.error("No Chromecast found with friendly name '%s'.", friendly_name)
         if listener.devices_by_name:
             logger.info("Discovered: %s", ", ".join(listener.devices_by_name.keys()))
         else:
             logger.info("No Chromecasts discovered.")
         sys.exit(1)
-
     try:
         cast = get_chromecast_from_cast_info(found_cast_info, zconf)
         cast.wait()
     except PyChromecastError as err:
         browser.stop_discovery()
+        zconf.close()
         logger.error("Failed to initialize Chromecast: %s", err)
         sys.exit(1)
-
-    # Attach browser for potential cleanup; global Zeroconf stays alive.
     cast._browser = browser
     cast._zeroconf = zconf
     logger.info("Connected to Chromecast: %s", found_cast_info.friendly_name)
@@ -108,4 +94,5 @@ def stop_casting(chromecast):
     logger.info("Stopped casting on %s", chromecast.cast_info.friendly_name)
     if hasattr(chromecast, "_browser"):
         chromecast._browser.stop_discovery()
-    # Never close the global Zeroconf.
+    if hasattr(chromecast, "_zeroconf"):
+        chromecast._zeroconf.close()

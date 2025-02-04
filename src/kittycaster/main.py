@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import os
 import sys
 import time
@@ -48,6 +47,7 @@ DEFAULT_CONFIG_DICT = {
     "serve_port": 8000,
     "include_local_media": True,
     "media_files": [],
+    "tv_ip": "192.168.0.215",
 }
 
 DEFAULT_CONTENT = """\
@@ -57,6 +57,7 @@ serve_local_folder: "videos"
 serve_port: 8000
 include_local_media: true
 media_files: []
+tv_ip: "192.168.0.184"
 
 schedule:
   # - friendly_name: "Living Room TV"
@@ -121,6 +122,23 @@ def build_local_url_if_needed(media_file: str, directory: str, port: int) -> str
     return f"http://{HOST_IP}:{port}/{os.path.basename(media_file)}"
 
 
+def turn_tv_off(tv_ip: str):
+    try:
+        from ppadb.client import Client as AdbClient
+
+        client = AdbClient(host="127.0.0.1", port=5037)
+        client.remote_connect(tv_ip, 5555)
+        device = client.device(f"{tv_ip}:5555")
+        if device is None:
+            logger.error("Could not connect to TV at %s", tv_ip)
+            return
+        device.shell("input keyevent 26")
+        client.remote_disconnect(tv_ip, 5555)
+        logger.info("TV at %s turned off successfully.", tv_ip)
+    except Exception as e:
+        logger.error("Failed to turn off TV: %s", e)
+
+
 def schedule_event(
     friendly_name: str,
     media_file: str,
@@ -130,6 +148,7 @@ def schedule_event(
     volume: float = 1.0,
     serve_local_folder: str = "",
     serve_port: int = 8000,
+    tv_ip: str = None,
 ):
     def perform_action():
         user_message(
@@ -144,6 +163,8 @@ def schedule_event(
             cast_media(cc, final_url, volume)
         elif action == "stop":
             stop_casting(cc)
+            if tv_ip:
+                turn_tv_off(tv_ip)
         else:
             logger.error("Unknown action: %s", action)
 
@@ -183,6 +204,7 @@ def load_schedule_from_config(config):
             vol,
             config["serve_local_folder"],
             config["serve_port"],
+            config.get("tv_ip"),
         )
 
 
@@ -217,6 +239,8 @@ def stop_current_video(config):
     cc = get_chromecast(config["friendly_name"], config["discovery_timeout"])
     logger.info("Manual stop.")
     stop_casting(cc)
+    if config.get("tv_ip"):
+        turn_tv_off(config.get("tv_ip"))
 
 
 def stop_all_devices(config):
@@ -226,6 +250,8 @@ def stop_all_devices(config):
         try:
             cc = get_chromecast(dev, config["discovery_timeout"])
             stop_casting(cc)
+            if config.get("tv_ip"):
+                turn_tv_off(config.get("tv_ip"))
         except SystemExit:
             logger.error("Could not stop device '%s'.", dev)
     devices_in_use.clear()
