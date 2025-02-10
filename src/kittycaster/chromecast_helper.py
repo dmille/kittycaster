@@ -66,12 +66,11 @@ def get_chromecast(friendly_name: str, discovery_timeout: int = 5):
         cast = get_chromecast_from_cast_info(found_cast_info, zconf)
         cast.wait()
     except PyChromecastError as err:
-        browser.stop_discovery()
-        zconf.close()
         logger.error("Failed to initialize Chromecast: %s", err)
         sys.exit(1)
-    cast._browser = browser
-    cast._zeroconf = zconf
+    finally:
+        browser.stop_discovery()
+        zconf.close()
     logger.info("Connected to Chromecast: %s", found_cast_info.friendly_name)
     return cast
 
@@ -92,7 +91,3 @@ def cast_media(chromecast, url: str, volume: float):
 def stop_casting(chromecast):
     chromecast.quit_app()
     logger.info("Stopped casting on %s", chromecast.cast_info.friendly_name)
-    if hasattr(chromecast, "_browser"):
-        chromecast._browser.stop_discovery()
-    if hasattr(chromecast, "_zeroconf"):
-        chromecast._zeroconf.close()
